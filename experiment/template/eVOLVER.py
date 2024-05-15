@@ -17,7 +17,7 @@ from nbstreamreader import NonBlockingStreamReader as NBSR
 import custom_script
 from custom_script import EXP_NAME
 from custom_script import EVOLVER_PORT, OPERATION_MODE
-from custom_script import STIR_INITIAL, TEMP_INITIAL
+from custom_script import STIR_INITIAL, TEMP_INITIAL, LIGHT_INITIAL, LIGHT_CAL_FILE
 
 # Should not be changed
 # vials to be considered/excluded should be handled
@@ -29,6 +29,7 @@ EXP_DIR = os.path.join(SAVE_PATH, EXP_NAME)
 OD_CAL_PATH = os.path.join(SAVE_PATH, 'od_cal.json')
 TEMP_CAL_PATH = os.path.join(SAVE_PATH, 'temp_cal.json')
 PUMP_CAL_PATH = os.path.join(SAVE_PATH, 'pump_cal.json')
+LIGHT_CAL_PATH = os.path.join(SAVE_PATH, LIGHT_CAL_FILE)
 JSON_PARAMS_FILE = os.path.join(SAVE_PATH, 'eVOLVER_parameters.json')
 
 SIGMOID = 'sigmoid'
@@ -272,6 +273,12 @@ class EvolverNamespace(BaseNamespace):
         logger.debug('temperature command: %s' % data)
         self.emit('command', data, namespace = '/dpu-evolver')
 
+    def update_light(self, light_vals, immediate = False):
+        data = {'param': 'light', 'value': light_vals,
+                'immediate': immediate, 'recurring': True}
+        logger.debug('light command: %s' % data)
+        self.emit('command', data, namespace = '/dpu-evolver')    
+
     def fluid_command(self, MESSAGE):
         logger.debug('fluid command: %s' % MESSAGE)
         command = {'param': 'pump', 'value': MESSAGE,
@@ -378,6 +385,8 @@ class EvolverNamespace(BaseNamespace):
             os.makedirs(os.path.join(EXP_DIR, 'chemo_config'))
             os.makedirs(os.path.join(EXP_DIR, 'step_config')) # for stepwise evolution settings
             os.makedirs(os.path.join(EXP_DIR, 'step_log')) # for stepwise evolution logging
+            os.makedirs(os.path.join(EXP_DIR, 'light_config'))
+  
             setup_logging(log_name, quiet, verbose)
             for x in vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(EXP_NAME,
@@ -424,6 +433,12 @@ class EvolverNamespace(BaseNamespace):
                 self._create_file(x, 'step_log',
                                   defaults=["0,0,0,0"], # Format: [elapsed_time, step_time, current step, chemical_concentration]
                                   directory='step_log')
+                # make light configuration file
+                self._create_file(x, 'light_config', # contains calibrated light values (in uE)
+                                  defaults=[exp_str,
+                                            "0,0,0,0,0"], # format: (time, light1 uE, PWM value 1, light2 uE, PWM value 2)
+                                  directory='light_config')
+
             stir_rate = STIR_INITIAL
             temp_values = TEMP_INITIAL
 
@@ -466,6 +481,9 @@ class EvolverNamespace(BaseNamespace):
 
     def check_for_calibrations(self):
         result = True
+        if not os.path.exists(LIGHT_CAL_PATH):
+            print(f'No light calibration file found at {LIGHT_CAL_PATH}')
+            result = False
         if not os.path.exists(OD_CAL_PATH) or not os.path.exists(TEMP_CAL_PATH) or not os.path.exists(PUMP_CAL_PATH):
             # log and request again
             logger.warning('Calibrations not received yet, requesting again')
@@ -497,6 +515,15 @@ class EvolverNamespace(BaseNamespace):
         with open(PUMP_CAL_PATH) as f:
             pump_cal = json.load(f)
         return pump_cal['coefficients']
+    
+    def get_light_vals(self):
+        file_path = os.path.join(SAVE_PATH, LIGHT_CAL_FILE)
+        light_calibration = np.loadtxt(file_path, delimiter="\t")
+        if len(light_calibration) == 16:
+            light_vals = light_calibration
+        else:
+            light_vals = light_calibration[0,:]
+        return light_vals
 
     def calc_growth_rate(self, vial, gr_start, elapsed_time):
         ODfile_name =  "vial{0}_OD.txt".format(vial)

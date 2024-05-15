@@ -22,11 +22,11 @@ EVOLVER_PORT = 8081
 
 ##### Identify pump calibration files, define initial values for temperature, stirring, volume, power settings
 
-TEMP_INITIAL = [30] * 16 #degrees C, makes 16-value list
+TEMP_INITIAL = [37] * 16 #degrees C, makes 16-value list
 #Alternatively enter 16-value list to set different values
 #TEMP_INITIAL = [30,30,30,30,32,32,32,32,34,34,34,34,36,36,36,36]
 
-STIR_INITIAL = [8] * 16 #try 8,10,12 etc; makes 16-value list
+STIR_INITIAL = [11] * 16 #try 8,10,12 etc; makes 16-value list
 #Alternatively enter 16-value list to set different values
 #STIR_INITIAL = [7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10]
 
@@ -34,7 +34,17 @@ VOLUME =  25 #mL, determined by vial cap straw length
 OPERATION_MODE = 'turbidostat' #use to choose between 'turbidostat' and 'chemostat' functions
 # if using a different mode, name your function as the OPERATION_MODE variable
 
+### Light Settings ###
+LIGHT_INITIAL = [100] * 16 #[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0] # light values in uE
+LIGHT_INITIAL += [0] * 16 # Currently unused second light channel
+LIGHT_FINAL = [1000]*16 + [0]*16 # light to set to after TIME_TO_FINAL
+# LIGHT_FINAL = [100]*4 + [200]*4 + [300]*4 + [500]*4 + [0] * 16 # light to set to after TIME_TO_FINAL
+TIME_TO_FINAL = 4 # hours until setting light to final 
+LIGHT_CAL_FILE = 'light_cal.txt'
+
 ##### END OF USER DEFINED GENERAL SETTINGS #####
+
+
 def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     OD_data = input_data['transformed']['od']
 
@@ -172,12 +182,14 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
 
     ##### END OF VARIABLE INITIALIZATION #####
 
+    light_MESSAGE = ['--'] * 32 # initializes light message
+    light_cal = eVOLVER.get_light_vals() # read from calibration file
+
     ##### Turbidostat Control Code Below #####
 
     # fluidic message: initialized so that no change is sent
     MESSAGE = ['--'] * 48
     for x in turbidostat_vials: #main loop through each vial
-
         # Update turbidostat configuration files for each vial
         # initialize OD and find OD path
 
@@ -397,6 +409,35 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
             text_file.write(f"{elapsed_time},{step_time},{current_step},{current_conc}\n") # Format: [elapsed_time, updated step_time, current_step, current_conc]
             text_file.close()
             
+            
+        #### LIGHT CONTROL CODE BELOW ####
+        if elapsed_time < TIME_TO_FINAL: # check if initial acclimation period is over
+            light_uE = LIGHT_INITIAL[x]
+        else:
+            light_uE = LIGHT_FINAL[x]
+        light_pwm = int((float(light_uE) - light_cal[x][1]) / light_cal[x][0]) # convert light value to PWM value (based on linear calibration)
+
+        ## Log light values in light_config file ##
+        file_name =  "vial{0}_light_config.txt".format(x)
+        light_config_path = os.path.join(eVOLVER.exp_dir, EXP_NAME,
+                                        'light_config', file_name) 
+        light_config = np.genfromtxt(light_config_path, delimiter=',', skip_header=1) #format: (time, light1 uE, PWM value 1, light2 uE, PWM value 2)
+        if light_config.ndim != 1: #np.genfromtext gives a 1D array if there's only one line, but 2D otherwise
+            light_config = light_config[-1] #get last line
+        last_light_time = light_config[0] #time of last light command
+        last_light_uE = light_config[1] #last light value in uE
+        last_light_pwm = light_config[2] #last light value in eVOLVER PWM units
+
+        light_MESSAGE[x] = light_pwm
+
+        if light_uE != last_light_uE: #log the new light values
+            print(f'Light updated in vial {x}, uE {light_uE}, PWM {light_pwm}')
+            logger.info(f'Light updated in vial {x}: uE {light_uE}, PWM {light_pwm}')
+            # writes command to light_config file, for storage
+            text_file = open(light_config_path, "a+")
+            text_file.write(f'{elapsed_time},{light_uE},{light_pwm},0,0\n')
+            text_file.close()
+
     # send fluidic command only if we are actually turning on any of the pumps
     if MESSAGE != ['--'] * 48:
         eVOLVER.fluid_command(MESSAGE)
