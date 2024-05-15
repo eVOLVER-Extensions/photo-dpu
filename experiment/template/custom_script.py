@@ -24,7 +24,7 @@ TEMP_INITIAL = [37] * 16 #degrees C, makes 16-value list
 #Alternatively enter 16-value list to set different values
 #TEMP_INITIAL = [30,30,30,30,32,32,32,32,34,34,34,34,36,36,36,36]
 
-STIR_INITIAL = [10] * 16 #try 8,10,12 etc; makes 16-value list
+STIR_INITIAL = [11] * 16 #try 8,10,12 etc; makes 16-value list
 #Alternatively enter 16-value list to set different values
 #STIR_INITIAL = [7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10]
 
@@ -33,15 +33,14 @@ OPERATION_MODE = 'turbidostat' #use to choose between 'turbidostat' and 'chemost
 # if using a different mode, name your function as the OPERATION_MODE variable
 
 ### Light Settings ###
-light1_initial = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0] # Main light
-light2_initial = [0] * 16 # Currently unused light channel
-LIGHT_INITIAL = light1_initial + light2_initial # values between 0 and 4096
+LIGHT_INITIAL = [100] * 16 #[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0] # light values in uE
+LIGHT_INITIAL += [0] * 16 # Currently unused second light channel
+LIGHT_FINAL = [1000]*16 + [0]*16 # light to set to after TIME_TO_FINAL
+# LIGHT_FINAL = [100]*4 + [200]*4 + [300]*4 + [500]*4 + [0] * 16 # light to set to after TIME_TO_FINAL
+TIME_TO_FINAL = 4 # hours until setting light to final 
 LIGHT_CAL_FILE = 'light_cal.txt'
 
 ##### END OF USER DEFINED GENERAL SETTINGS #####
-
-def growth_curve(eVOLVER, input_data, vials, elapsed_time):
-    return
 
 def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     OD_data = input_data['transformed']['od']
@@ -52,8 +51,8 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     stop_after_n_curves = np.inf #set to np.inf to never stop, or integer value to stop diluting after certain number of growth curves
     OD_values_to_average = 6  # Number of values to calculate the OD average
 
-    lower_thresh = [0.2] * len(vials) #to set all vials to the same value, creates 16-value list
-    upper_thresh = [0.4] * len(vials) #to set all vials to the same value, creates 16-value list
+    lower_thresh = [1.6] * len(vials) #to set all vials to the same value, creates 16-value list
+    upper_thresh = [2] * len(vials) #to set all vials to the same value, creates 16-value list
 
     if eVOLVER.experiment_params is not None:
         lower_thresh = list(map(lambda x: x['lower'], eVOLVER.experiment_params['vial_configuration']))
@@ -85,10 +84,6 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     # fluidic message: initialized so that no change is sent
     MESSAGE = ['--'] * 48
     for x in turbidostat_vials: #main loop through each vial
-        # convert light value to PWM value (based on linear calibration)
-        light_MESSAGE[x] = int((float(light1_initial[x]) - light_cal[x][1]) / light_cal[x][0])
-        light_MESSAGE[x+16] = int((float(light2_initial[x]) - light_cal[x][1]) / light_cal[x][0])
-
         # Update turbidostat configuration files for each vial
         # initialize OD and find OD path
 
@@ -161,15 +156,41 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
         else:
             logger.debug('not enough OD measurements for vial %d' % x)
 
+        #### LIGHT CONTROL CODE BELOW ####
+        if elapsed_time < TIME_TO_FINAL: # check if initial acclimation period is over
+            light_uE = LIGHT_INITIAL[x]
+        else:
+            light_uE = LIGHT_FINAL[x]
+        light_pwm = int((float(light_uE) - light_cal[x][1]) / light_cal[x][0]) # convert light value to PWM value (based on linear calibration)
+
+        ## Log light values in light_config file ##
+        file_name =  "vial{0}_light_config.txt".format(x)
+        light_config_path = os.path.join(eVOLVER.exp_dir, EXP_NAME,
+                                        'light_config', file_name) 
+        light_config = np.genfromtxt(light_config_path, delimiter=',', skip_header=1) #format: (time, light1 uE, PWM value 1, light2 uE, PWM value 2)
+        if light_config.ndim != 1: #np.genfromtext gives a 1D array if there's only one line, but 2D otherwise
+            light_config = light_config[-1] #get last line
+        last_light_time = light_config[0] #time of last light command
+        last_light_uE = light_config[1] #last light value in uE
+        last_light_pwm = light_config[2] #last light value in eVOLVER PWM units
+
+        light_MESSAGE[x] = light_pwm
+
+        if light_uE != last_light_uE: #log the new light values
+            print(f'Light updated in vial {x}, uE {light_uE}, PWM {light_pwm}')
+            logger.info(f'Light updated in vial {x}: uE {light_uE}, PWM {light_pwm}')
+            # writes command to light_config file, for storage
+            text_file = open(light_config_path, "a+")
+            text_file.write(f'{elapsed_time},{light_uE},{light_pwm},0,0\n')
+            text_file.close()
+
     # send fluidic command only if we are actually turning on any of the pumps
     if MESSAGE != ['--'] * 48:
         eVOLVER.fluid_command(MESSAGE)
 
     # end of turbidostat() fxn
-    
-    # send light command only if we are changing light
-    if light_MESSAGE != ['--'] * 32:
-        eVOLVER.update_light(light_MESSAGE)
+
+    eVOLVER.update_light(light_MESSAGE)
 
 def chemostat(eVOLVER, input_data, vials, elapsed_time):
     OD_data = input_data['transformed']['od']
@@ -215,10 +236,6 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
     ##### Chemostat Control Code Below #####
 
     for x in chemostat_vials: #main loop through each vial
-        # convert light value to PWM value (based on linear calibration)
-        light_MESSAGE[x] = int((float(light1_initial[x]) - light_cal[x][1]) / light_cal[x][0])
-        light_MESSAGE[x+16] = int((float(light2_initial[x]) - light_cal[x][1]) / light_cal[x][0])
-
         # Update chemostat configuration files for each vial
 
         #initialize OD and find OD path
@@ -268,8 +285,33 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
         else:
             logger.debug('not enough OD measurements for vial %d' % x)
 
-        # your_FB_function_here() #good spot to call feedback functions for dynamic temperature, stirring, etc for ind. vials
-    # your_function_here() #good spot to call non-feedback functions for dynamic temperature, stirring, etc.
+        #### LIGHT CONTROL CODE BELOW ####
+        if elapsed_time < TIME_TO_FINAL: # check if initial acclimation period is over
+            light_uE = LIGHT_INITIAL[x]
+        else:
+            light_uE = LIGHT_FINAL[x]
+        light_pwm = int((float(light_uE) - light_cal[x][1]) / light_cal[x][0]) # convert light value to PWM value (based on linear calibration)
+
+        ## Log light values in light_config file ##
+        file_name =  "vial{0}_light_config.txt".format(x)
+        light_config_path = os.path.join(eVOLVER.exp_dir, EXP_NAME,
+                                        'light_config', file_name) 
+        light_config = np.genfromtxt(light_config_path, delimiter=',', skip_header=1) #format: (time, light1 uE, PWM value 1, light2 uE, PWM value 2)
+        if light_config.ndim != 1: #np.genfromtext gives a 1D array if there's only one line, but 2D otherwise
+            light_config = light_config[-1] #get last line
+        last_light_time = light_config[0] #time of last light command
+        last_light_uE = light_config[1] #last light value in uE
+        last_light_pwm = light_config[2] #last light value in eVOLVER PWM units
+
+        light_MESSAGE[x] = light_pwm
+
+        if light_uE != last_light_uE: #log the new light values
+            print(f'Light updated in vial {x}, uE {light_uE}, PWM {light_pwm}')
+            logger.info(f'Light updated in vial {x}: uE {light_uE}, PWM {light_pwm}')
+            # writes command to light_config file, for storage
+            text_file = open(light_config_path, "a+")
+            text_file.write(f'{elapsed_time},{light_uE},{light_pwm},0,0\n')
+            text_file.close()
 
     eVOLVER.update_chemo(input_data, chemostat_vials, bolus_in_s, period_config) #compares computed chemostat config to the remote one
     # end of chemostat() fxn

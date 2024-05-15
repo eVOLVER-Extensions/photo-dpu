@@ -414,9 +414,10 @@ class EvolverNamespace(BaseNamespace):
                                             "0,0,0"],
                                   directory='chemo_config')
                 # make light configuration file
-                self._create_file(x, 'light_config',
+                self._create_file(x, 'light_config', # contains calibrated light values (in uE)
                                   defaults=[exp_str,
-                                            "0,{0},{1}".format(LIGHT_INITIAL[x], LIGHT_INITIAL[x+16])])
+                                            "0,0,0,0,0"], # format: (time, light1 uE, PWM value 1, light2 uE, PWM value 2)
+                                  directory='light_config')
 
             stir_rate = STIR_INITIAL
             temp_values = TEMP_INITIAL
