@@ -378,10 +378,15 @@ class EvolverNamespace(BaseNamespace):
             os.makedirs(os.path.join(EXP_DIR, 'temp'))
             os.makedirs(os.path.join(EXP_DIR, 'temp_config'))
             os.makedirs(os.path.join(EXP_DIR, 'pump_log'))
+            os.makedirs(os.path.join(EXP_DIR, 'slow_pump_log'))
             os.makedirs(os.path.join(EXP_DIR, 'ODset'))
             os.makedirs(os.path.join(EXP_DIR, 'growthrate'))
+            os.makedirs(os.path.join(EXP_DIR, 'continuous_gr')) # for continuous growth rate
             os.makedirs(os.path.join(EXP_DIR, 'chemo_config'))
+            os.makedirs(os.path.join(EXP_DIR, 'step_config')) # for stepwise evolution settings
+            os.makedirs(os.path.join(EXP_DIR, 'step_log')) # for stepwise evolution logging
             os.makedirs(os.path.join(EXP_DIR, 'light_config'))
+  
             setup_logging(log_name, quiet, verbose)
             for x in vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(EXP_NAME,
@@ -399,6 +404,9 @@ class EvolverNamespace(BaseNamespace):
                 self._create_file(x, 'pump_log',
                                   defaults=[exp_str,
                                             "0,0"])
+                self._create_file(x, 'slow_pump_log',
+                                  defaults=[exp_str,
+                                            "0,0"])
                 # make ODset file
                 self._create_file(x, 'ODset',
                                   defaults=[exp_str,
@@ -408,11 +416,23 @@ class EvolverNamespace(BaseNamespace):
                                   defaults=[exp_str,
                                             "0,0"],
                                   directory='growthrate')
+                # make continuous growth rate file
+                self._create_file(x, 'continuous_gr',
+                                  defaults=["0,0,0"], # Format: [elapsed_time (expt time), growth rate]
+                                  directory='continuous_gr')
                 # make chemostat file
                 self._create_file(x, 'chemo_config',
                                   defaults=["0,0,0",
                                             "0,0,0"],
                                   directory='chemo_config')
+                # make stepwise evolution settings file
+                self._create_file(x, 'step_config',
+                                  defaults=["0,0,0"], # Format: [elapsed_time, step1, step2, ...]
+                                  directory='step_config')
+                # make stepwise evolution data logging file
+                self._create_file(x, 'step_log',
+                                  defaults=["0,0,0,0"], # Format: [elapsed_time, step_time, current step, chemical_concentration]
+                                  directory='step_log')
                 # make light configuration file
                 self._create_file(x, 'light_config', # contains calibrated light values (in uE)
                                   defaults=[exp_str,
