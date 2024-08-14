@@ -384,6 +384,7 @@ class EvolverNamespace(BaseNamespace):
             os.makedirs(os.path.join(EXP_DIR, 'continuous_gr')) # for continuous growth rate
             os.makedirs(os.path.join(EXP_DIR, 'chemo_config'))
             os.makedirs(os.path.join(EXP_DIR, 'step_config')) # for stepwise evolution settings
+            os.makedirs(os.path.join(EXP_DIR, 'step_gen_config')) # for stepwise evolution settings
             os.makedirs(os.path.join(EXP_DIR, 'step_log')) # for stepwise evolution logging
             os.makedirs(os.path.join(EXP_DIR, 'light_config'))
   
@@ -416,10 +417,6 @@ class EvolverNamespace(BaseNamespace):
                                   defaults=[exp_str,
                                             "0,0"],
                                   directory='growthrate')
-                # make continuous growth rate file
-                self._create_file(x, 'continuous_gr',
-                                  defaults=["0,0,0"], # Format: [elapsed_time (expt time), growth rate]
-                                  directory='continuous_gr')
                 # make chemostat file
                 self._create_file(x, 'chemo_config',
                                   defaults=["0,0,0",
@@ -427,11 +424,18 @@ class EvolverNamespace(BaseNamespace):
                                   directory='chemo_config')
                 # make stepwise evolution settings file
                 self._create_file(x, 'step_config',
-                                  defaults=["0,0,0"], # Format: [elapsed_time, step1, step2, ...]
+                                  defaults=[exp_str,
+                                            "0,0,0"], # Format: [elapsed_time, step1, step2, ...]
                                   directory='step_config')
+                # make stepwise evolution variable generation file
+                self._create_file(x, 'step_gen_config',
+                                  defaults=[exp_str,
+                                            "0,0,0"], # Format: [elapsed_time, ]
+                                  directory='step_gen_config')
                 # make stepwise evolution data logging file
                 self._create_file(x, 'step_log',
-                                  defaults=["0,0,0,0"], # Format: [elapsed_time, step_time, current step, chemical_concentration]
+                                  defaults=[exp_str,
+                                            "0,0,0,0,0"], # Format: [elapsed_time, step_change_time, current step, chemical_concentration, event_message]
                                   directory='step_log')
                 # make light configuration file
                 self._create_file(x, 'light_config', # contains calibrated light values (in uE)
@@ -552,55 +556,6 @@ class EvolverNamespace(BaseNamespace):
         text_file = open(gr_path, "a+")
         text_file.write("{0},{1}\n".format(elapsed_time, slope))
         text_file.close()
-
-    def tail_to_np(self, path, window=10, BUFFER_SIZE=512):
-        """
-        Reads file from the end and returns a numpy array with the data of the last 'window' lines.
-        Alternative to np.genfromtxt(path) by loading only the needed lines instead of the whole file.
-        """
-        f = open(path, 'rb')
-        if window == 0:
-            return []
-
-        f.seek(0, os.SEEK_END)
-        remaining_bytes = f.tell()
-        size = window + 1  # Read one more line to avoid broken lines
-        block = -1
-        data = []
-
-        while size > 0 and remaining_bytes > 0:
-            if remaining_bytes - BUFFER_SIZE > 0:
-                # Seek back one whole BUFFER_SIZE
-                f.seek(block * BUFFER_SIZE, os.SEEK_END)
-                # read BUFFER
-                bunch = f.read(BUFFER_SIZE)
-            else:
-                # file too small, start from beginning
-                f.seek(0, 0)
-                # only read what was not read
-                bunch = f.read(remaining_bytes)
-
-            bunch = bunch.decode('utf-8')
-            data.append(bunch)
-            size -= bunch.count('\n')
-            remaining_bytes -= BUFFER_SIZE
-            block -= 1
-
-        data = ''.join(reversed(data)).splitlines()[-window:]
-
-        if len(data) < window:
-            # Not enough data
-            return np.asarray([])
-
-        for c, v in enumerate(data):
-            data[c] = v.split(',')
-
-        try:
-            data = np.asarray(data, dtype=np.float64)
-            return data
-        except ValueError:
-            # It is reading the header
-            return np.asarray([])
 
     def custom_functions(self, data, vials, elapsed_time):
         # load user script from custom_script.py
