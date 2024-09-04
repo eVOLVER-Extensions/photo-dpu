@@ -5,6 +5,7 @@ import logging
 import os.path
 import time
 import step_utils as su
+import light_control
 import pandas as pd
 import traceback
 
@@ -36,12 +37,8 @@ OPERATION_MODE = 'turbidostat' #use to choose between 'turbidostat' and 'chemost
 # if using a different mode, name your function as the OPERATION_MODE variable
 
 ### Light Settings ###
-LIGHT_INITIAL = [100] * 16 #[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0] # light values in uE
-LIGHT_INITIAL += [0] * 16 # Currently unused second light channel
-LIGHT_FINAL = [1000]*16 + [0]*16 # light to set to after TIME_TO_FINAL
-# LIGHT_FINAL = [100]*4 + [200]*4 + [300]*4 + [500]*4 + [0] * 16 # light to set to after TIME_TO_FINAL
-TIME_TO_FINAL = 4.5 # hours until setting light to final 
 LIGHT_CAL_FILE = 'light_cal.txt'
+EXCEL_CONFIG_FILE = "experiment_configurations.xlsx"
 
 ##### END OF USER DEFINED GENERAL SETTINGS #####
 
@@ -101,7 +98,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     # TODO: Save experiment variables in data file
     # TODO: Notify the user of number of change of settings and result of settings like: max curves possible in a step,
     # TODO: change x in for loops to vial for consistency
-    # TODO: turn selection and light into functions
+    # TODO: turn selection into function
     # TODO: find/make a function that checks that a variable is a positive int and not anything else
     # length of time before decreasing selection if growth stalls, how a rescue dilution will work
     ### End of Stepped Evolution Settings ###
@@ -206,9 +203,6 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     ## End of Selection Step Initialization ##
 
     ##### END OF VARIABLE INITIALIZATION #####
-
-    light_MESSAGE = ['--'] * 32 # initializes light message
-    light_cal = eVOLVER.get_light_vals() # read from calibration file
 
     ##### Turbidostat Control Code Below #####
 
@@ -510,43 +504,14 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
                 print(f"Vial {vial}: Error in Selection Fluidics Step: \n\t{e}\nTraceback:\n\t{traceback.format_exc()}")
                 logger.error(f"Vial {vial}: Error in Selection Fluidics Step: \n\t{e}\nTraceback:\n\t{traceback.format_exc()}")
                 continue
-            
     
-    for x in turbidostat_vials:
-        #### LIGHT CONTROL CODE BELOW ####
-        if elapsed_time < TIME_TO_FINAL: # check if initial acclimation period is over
-            light_uE = LIGHT_INITIAL[x]
-        else:
-            light_uE = LIGHT_FINAL[x]
-        light_pwm = int((float(light_uE) - light_cal[x][1]) / light_cal[x][0]) # convert light value to PWM value (based on linear calibration)
-
-        ## Log light values in light_config file ##
-        file_name =  "vial{0}_light_config.txt".format(x)
-        light_config_path = os.path.join(eVOLVER.exp_dir, EXP_NAME,
-                                        'light_config', file_name) 
-        light_config = np.genfromtxt(light_config_path, delimiter=',', skip_header=1) #format: (time, light1 uE, PWM value 1, light2 uE, PWM value 2)
-        if light_config.ndim != 1: #np.genfromtext gives a 1D array if there's only one line, but 2D otherwise
-            light_config = light_config[-1] #get last line
-        last_light_time = light_config[0] #time of last light command
-        last_light_uE = light_config[1] #last light value in uE
-        last_light_pwm = light_config[2] #last light value in eVOLVER PWM units
-
-        light_MESSAGE[x] = light_pwm
-
-        if light_uE != last_light_uE: #log the new light values
-            print(f'Light updated in vial {x}, uE {light_uE}, PWM {light_pwm}')
-            logger.info(f'Light updated in vial {x}: uE {light_uE}, PWM {light_pwm}')
-            # writes command to light_config file, for storage
-            text_file = open(light_config_path, "a+")
-            text_file.write(f'{elapsed_time},{light_uE},{light_pwm},0,0\n')
-            text_file.close()
-
     # send fluidic command only if we are actually turning on any of the pumps
     if MESSAGE != ['--'] * 48:
         eVOLVER.fluid_command(MESSAGE)
         logger.info(f'Pump MESSAGE = {MESSAGE}')
-    
-    eVOLVER.update_light(light_MESSAGE)
+
+    #### LIGHT CONTROL CODE BELOW ####
+    light_control.control(eVOLVER, vials, elapsed_time, logger)
 
 if __name__ == '__main__':
     print('Please run eVOLVER.py instead')

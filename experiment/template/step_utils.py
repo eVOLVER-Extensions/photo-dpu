@@ -95,10 +95,31 @@ def get_last_n_lines(var_name, vial, n_lines):
         except Exception as e:
             print(f"Unable to read file using np.genfromtxt: {file_path}.\n\tError: {e}")
             return np.asarray([])
+        
+def labeled_last_n_lines(var_name, vial, n_lines):
+    """
+    Gets the last n lines of a variable in a vial's data, then labels them with the header from the CSV file.
+    Args:
+        var_name (str): The name of the variable.
+        vial (int): The vial number.
+        n_lines (int): The number of lines to retrieve.
+    Returns:
+        pd.DataFrame: The last n lines of the variable, with headers.
+    """
+    file_name = f"vial{vial}_{var_name}.txt"
+    path = os.path.join(EXP_NAME, var_name, file_name)
+
+    with open(path, 'r') as file:
+        heading = file.readline().strip().split(',')
+    
+    data = get_last_n_lines(var_name, vial, n_lines)
+    if data.ndim == 0:
+        return pd.DataFrame(data, columns=[heading])
+    return pd.DataFrame(data, columns=heading)
 
 def compare_configs(var_name, vial, current_config):
     """
-    Compare the current configuration with the last configuration for a given variable and vial.
+    Compare the current configuration with the last configuration for a given variable and vial. Ignores the time in index 0.
     Args:
         var_name (str): The name of the variable.
         vial (int): The name of the vial.
