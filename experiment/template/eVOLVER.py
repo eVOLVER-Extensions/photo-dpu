@@ -335,7 +335,7 @@ class EvolverNamespace(BaseNamespace):
             text_file.write(default + '\n')
         text_file.close()
 
-    def load_excel_configs(vials, config_filename=EXCEL_CONFIG_FILE):
+    def load_excel_configs(self, elapsed_time, vials, config_filename=EXCEL_CONFIG_FILE):
         """
         Load configurations from an Excel file and compare them with existing configs for each vial.
 
@@ -347,13 +347,12 @@ class EvolverNamespace(BaseNamespace):
             Logs config changes for each vial.
             Closes the Excel file handle.
         """
-            
+        
         # Load the Excel file
         excel_file = pd.ExcelFile(config_filename)
 
         # Get the list of configs
         config_names = excel_file.sheet_names
-        print(config_names)
 
         # Iterate through each sheet
         for config_name in config_names:
@@ -362,7 +361,8 @@ class EvolverNamespace(BaseNamespace):
             
             # Compare config from file with existing configs for each vial
             for vial in vials:
-                current_config = config.loc[vial]
+                current_config = np.array(config.loc[vial])
+                current_config[0] = elapsed_time # replace first value in current config with elapsed time
                 config_change = su.compare_configs(config_name, vial, current_config)
 
                 if config_change:
@@ -481,13 +481,13 @@ class EvolverNamespace(BaseNamespace):
                 # make light configuration file
                 self._create_file(x, 'light_config',
                                   defaults=["elapsed_time,acclimation_time,acclimation_light,final_light,cycle_start,ON_length,OFF_length",
-                                            "0,0,0,0,0,0,0,0"],
+                                            "0,0,0,0,0,0,0"],
                                   directory='light_config')
                 # make light log file
                 self._create_file(x, 'light_log',
                                   defaults=["elapsed_time,light_time,light1_uE,PWM_1,light2_uE,PWM_2,light3_uE,PWM_3",
                                             "0,0,0,0,0,0,0,0"], # format: (elapsed_time, light_time, light1 uE, PWM value 1, light2 uE, PWM value 2, light3 uE, PWM value 3)
-                                  directory='light_config')
+                                  directory='light_log')
 
             stir_rate = STIR_INITIAL
             temp_values = TEMP_INITIAL
@@ -519,7 +519,8 @@ class EvolverNamespace(BaseNamespace):
             start_time = x[0]
             self.OD_initial = x[1]
 
-        self.load_excel_configs(vials) # Load configurations from an Excel file and compare them with existing configs for each vial.
+        elapsed_time = round((time.time() - start_time) / 3600, 4)
+        self.load_excel_configs(elapsed_time, vials, config_filename=EXCEL_CONFIG_FILE) # Load configurations from an Excel file and compare them with existing configs for each vial.
 
         # copy current custom script to txt file
         backup_filename = '{0}_{1}.txt'.format(EXP_NAME,

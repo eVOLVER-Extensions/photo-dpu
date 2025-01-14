@@ -1,10 +1,9 @@
 import os
 import numpy as np
 import pandas as pd
-from custom_script import EXP_NAME
 import step_utils as su
 
-def control(eVOLVER, vials, elapsed_time, logger):
+def control(eVOLVER, vials, elapsed_time, logger, EXP_NAME):
     """
     Controls the light settings for a specific vial based on the elapsed time
     and logs the configuration changes.
@@ -23,7 +22,7 @@ def control(eVOLVER, vials, elapsed_time, logger):
         light_uE,light_status = determine_light_uE(elapsed_time, vial) # logic to determine light_uE based off of time
         light_pwm = calculate_pwm(light_uE, light_cal[vial])
 
-        log_light_update(eVOLVER, vial, elapsed_time, light_uE, light_pwm, light_status, logger)
+        log_light_update(eVOLVER, vial, elapsed_time, light_uE, light_pwm, light_status, logger, EXP_NAME)
         light_MESSAGE[vial] = str(light_pwm)
 
     eVOLVER.update_light(light_MESSAGE)
@@ -42,6 +41,12 @@ def determine_light_uE(elapsed_time, vial):
     # Load light_config for this vial
     light_config = su.labeled_last_n_lines('light_config', vial, 1).to_dict(orient='records')[0]
     
+    ### light_time necessary for more complicated control
+    # Load light_log
+    # # Calculate how long it has been since the last light update
+    # last_light_time = light_log['light_time']
+    # light_time = elapsed_time - last_light_time
+
     # During the acclimation phase
     if elapsed_time < light_config['acclimation_time']:
         return light_config['acclimation_light'], 'ACCLIMATING'
@@ -84,7 +89,7 @@ def calculate_pwm(light_uE, calibration):
     return int((float(light_uE) - calibration[1]) / calibration[0])
 
 
-def log_light_update(eVOLVER, vial, elapsed_time, light_uE, light_pwm, light_status, logger=None):
+def log_light_update(eVOLVER, vial, elapsed_time, light_uE, light_pwm, light_status, logger, expt_name):
     """
     Logs the update of light values to the console, logger, and the log file.
 
@@ -101,13 +106,11 @@ def log_light_update(eVOLVER, vial, elapsed_time, light_uE, light_pwm, light_sta
     last_light1_uE = light_log['light1_uE']
 
     if light_uE != last_light1_uE:
-        # Calculate how long it has been since the last light update
-        last_light_time = light_log['light_time']
-        light_time = elapsed_time - last_light_time
+        light_time = 0 # Reset light time
 
         # Log the light update to the log file
         file_name =  f"vial{vial}_light_log.txt"
-        file_path = os.path.join(eVOLVER.exp_dir, EXP_NAME, 'light_log', file_name)
+        file_path = os.path.join(eVOLVER.exp_dir, expt_name, 'light_log', file_name)
         text_file = open(file_path, "a+")
         text_file.write(f"{elapsed_time},{light_time},{light_uE},{light_pwm},0,0,0,0\n") # Format: [elapsed_time, step_changed_time, current_step, current_conc]
         text_file.close()

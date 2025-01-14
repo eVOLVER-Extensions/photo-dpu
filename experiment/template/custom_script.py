@@ -24,7 +24,7 @@ EVOLVER_PORT = 8081
 
 ##### Identify pump calibration files, define initial values for temperature, stirring, volume, power settings
 
-TEMP_INITIAL = [37] * 16 #degrees C, makes 16-value list
+TEMP_INITIAL = [38] * 16 #degrees C, makes 16-value list
 #Alternatively enter 16-value list to set different values
 #TEMP_INITIAL = [30,30,30,30,32,32,32,32,34,34,34,34,36,36,36,36]
 
@@ -221,7 +221,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
 
         file_name =  "vial{0}_OD.txt".format(x)
         OD_path = os.path.join(eVOLVER.exp_dir, EXP_NAME, 'OD', file_name)
-        data = su.get_last_n_lines('OD', x, OD_values_to_average)
+        data = eVOLVER.tail_to_np(OD_path, OD_values_to_average)
         average_OD = 0
 
         # Determine whether turbidostat dilutions are needed
@@ -511,7 +511,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
         logger.info(f'Pump MESSAGE = {MESSAGE}')
 
     #### LIGHT CONTROL CODE BELOW ####
-    light_control.control(eVOLVER, vials, elapsed_time, logger)
+    light_control.control(eVOLVER, vials, elapsed_time, logger, EXP_NAME)
 
 if __name__ == '__main__':
     print('Please run eVOLVER.py instead')
