@@ -1,121 +1,115 @@
 import os
 import numpy as np
 import pandas as pd
-import step_utils as su
+import logging
+import utils.file_utils as fu
+import step_control
 
-def control(eVOLVER, vials, elapsed_time, logger, EXP_NAME):
-    """
-    Controls the light settings for a specific vial based on the elapsed time
-    and logs the configuration changes.
+### Light Settings ###
+LIGHT_CAL_FILE = 'light_cal.txt'
+SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
+LIGHT_CAL_PATH = os.path.join(SAVE_PATH, LIGHT_CAL_FILE) # TODO: port light calibration import into light_control.py
 
-    Parameters:
-    - eVOLVER: EvolverNamespace object, interface to eVOLVER hardware.
-    - elapsed_time: Time since the experiment started.
-    - vials: The vial numbers to control.
-    - light_cal: Calibration data for converting light to PWM values.
-    - logger: Logger object for logging events.
-    """
-    light_MESSAGE = ['--'] * 32 # initializes light message
-    light_cal = eVOLVER.get_light_calibration() # read from calibration file
+class LightController:
+    def __init__(self, vials, dilution_window, elapsed_time, eVOLVER):
+        self.vials = vials
+        self.dilution_window = dilution_window
+        self.elapsed_time = elapsed_time
+        self.eVOLVER = eVOLVER
+        self.logger = eVOLVER.logger
+        self.exp_dir = eVOLVER.exp_dir
+     
+        self.light_MESSAGE = ['--'] * 48 # initializes light message
+        self.light_cal = self.get_light_calibration() # read from calibration file
 
-    for vial in vials:
-        light_uE,light_status = determine_light_uE(elapsed_time, vial) # logic to determine light_uE based off of time
-        light_pwm = calculate_pwm(light_uE, light_cal[vial])
+    def control(self):
+        """
+        Controls the light settings for a specific vial based on the elapsed time
+        and logs the configuration changes.
+        """
+        for vial in self.vials:
+            light_uE,light_status_message = self.determine_light_level(vial)
 
-        log_light_update(eVOLVER, vial, elapsed_time, light_uE, light_pwm, light_status, logger, EXP_NAME)
-        light_MESSAGE[vial] = str(light_pwm)
-
-    eVOLVER.update_light(light_MESSAGE)
-
-def determine_light_uE(elapsed_time, vial):
-    """
-    Determines the light value in uE for the given vial based on elapsed time.
-
-    Parameters:
-    - elapsed_time: Time (in hours) since the start of the experiment.
-    - vial: The vial identifier to fetch light config and log data.
-
-    Returns:
-    - The light value in uE (micromoles per second per meter squared).
-    """
-    # Load light_config for this vial
-    light_config = su.labeled_last_n_lines('light_config', vial, 1).to_dict(orient='records')[0]
-    
-    ### light_time necessary for more complicated control
-    # Load light_log
-    # # Calculate how long it has been since the last light update
-    # last_light_time = light_log['light_time']
-    # light_time = elapsed_time - last_light_time
-
-    # During the acclimation phase
-    if elapsed_time < light_config['acclimation_time']:
-        return light_config['acclimation_light'], 'ACCLIMATING'
-    
-    # Post-acclimation phase, determine the light based on ON/OFF cycles
-    cycle_start = light_config['cycle_start']  # Time to begin light cycling
-    final_light = light_config['final_light']  # Final light intensity after acclimation        
-    if elapsed_time >= cycle_start:
-        on_length = light_config['ON_length']      # Duration of light being ON in hours
-        off_length = light_config['OFF_length']    # Duration of light being OFF in hours
-
-        # Calculate current cycle position based on the elapsed time since cycle_start
-        cycle_duration = on_length + off_length    # Total duration of one light cycle (ON + OFF)
-        time_in_cycle = (elapsed_time - cycle_start) % cycle_duration  # Position in the current cycle
-
-        # Determine if the current time is in the ON or OFF phase
-        if time_in_cycle < on_length:
-            # Light is ON
-            return final_light, 'CYCLING-ON'
-        else:
-            # Light is OFF
-            return 0, 'CYCLING-OFF'  # Light intensity is 0 when OFF
+            if light_status_message is not None:
+                print(f'{self.elapsed_time}hrs | Vial {vial}: {light_status_message}')
+                light_pwm = self.calculate_pwm(light_uE, self.light_cal[vial])
+                self.light_MESSAGE[vial] = str(light_pwm)
+                
+                # Log the light status message
+                if light_status_message != '[STEP CHANGE]': # light status message was already logged in light_controller.control()
+                    log_message = f"{self.elapsed_time},{light_uE},0,{light_status_message}"
+                    fu.update_log(vial, f'light_log', self.elapsed_time, log_message, self.exp_dir)
         
-    else:
-        return light_config['final_light'], 'ON'
+        # Send light command to eVOLVER
+        if self.light_MESSAGE != ['--'] * 48:
+            self.update_light(self.light_MESSAGE)
 
+    def determine_light_level(self, vial):
+        """
+        Determines the light value in uE for the given vial based on elapsed time.
 
-def calculate_pwm(light_uE, calibration):
-    """
-    Converts a light value (uE) to a PWM value based on calibration data.
-    
-    Parameters:
-    - light_uE: The desired light intensity in uE.
+        Returns:
+        - The light value in uE (micromoles per second per meter squared).
+        """
+        # Load light_controls for this vial
+        light_controls = fu.labeled_last_n_lines('light-control', vial, 1, self.exp_dir).iloc[0]
+        step_type = light_controls['step_type'].lower()
+        acclimation_time = float(light_controls['acclimation_time'])
+        acclimation_light = float(light_controls['acclimation_light'])
+        final_light = float(light_controls['final_light'])
 
-    Returns:
-    - light_pwm: The corresponding PWM value for the light intensity.
-    """
-    if light_uE == 0:
-        return 0
-    return int((float(light_uE) - calibration[1]) / calibration[0])
+        light_log = fu.labeled_last_n_lines('light_log', vial, 1, self.exp_dir).iloc[0]
+        current_light = float(light_log['current_step'])
 
+        # During the acclimation phase
+        if (self.elapsed_time < acclimation_time) and (current_light != acclimation_light):
+            print(f'Vial {vial}: light is ON, acclimating at {acclimation_light}uE')
+            return acclimation_light, f'[ACCLIMATING] at {acclimation_light}uE'
+        
+        # Final light level, no stepped control
+        elif (step_type == 'off') and (current_light != final_light):
+            print(f'Vial {vial}: light is ON, final light is {final_light}uE')
+            return float(light_controls['final_light']), f'[FINAL LIGHT] at {final_light}uE'
+        
+        # Stepped Control
+        else:
+            light_controller = step_control.SteppedController(vial, 'light', self.dilution_window, self.elapsed_time, self.eVOLVER)
+            MESSAGE,light_status_message= light_controller.control()
+            light_log = fu.labeled_last_n_lines('light_log', vial, 1, self.exp_dir).iloc[0]
+            current_light = float(light_log['current_step'])
 
-def log_light_update(eVOLVER, vial, elapsed_time, light_uE, light_pwm, light_status, logger, expt_name):
-    """
-    Logs the update of light values to the console, logger, and the log file.
+            if light_status_message:
+                print(f'Vial {vial}: light updated to {current_light}')
+                return current_light,'[STEP CHANGE]'
+            
+        return None,None
 
-    Parameters:
-    - vial: The vial number.
-    - elapsed_time: Time since the experiment started.
-    - light_uE: The new light value in uE.
-    - light_pwm: The new light value in PWM units.
-    - logger: Logger object for logging events.
-    """
-    
-    # Load the most recent light_log entry for this vial
-    light_log = su.labeled_last_n_lines('light_log', vial, 1).to_dict(orient='records')[0]
-    last_light1_uE = light_log['light1_uE']
+    def calculate_pwm(self, light_uE, calibration):
+        """
+        Converts a light value (uE) to a PWM value based on calibration data.
+        
+        Parameters:
+        - light_uE: The desired light intensity in uE.
 
-    if light_uE != last_light1_uE:
-        light_time = 0 # Reset light time
+        Returns:
+        - light_pwm: The corresponding PWM value for the light intensity.
+        """
+        if light_uE == 0:
+            return 0
+        return int((float(light_uE) - calibration[1]) / calibration[0])
 
-        # Log the light update to the log file
-        file_name =  f"vial{vial}_light_log.txt"
-        file_path = os.path.join(eVOLVER.exp_dir, expt_name, 'light_log', file_name)
-        text_file = open(file_path, "a+")
-        text_file.write(f"{elapsed_time},{light_time},{light_uE},{light_pwm},0,0,0,0\n") # Format: [elapsed_time, step_changed_time, current_step, current_conc]
-        text_file.close()
+    def get_light_calibration(self):
+        file_path = os.path.join(SAVE_PATH, LIGHT_CAL_FILE)
+        light_calibration = np.loadtxt(file_path, delimiter="\t")
+        if len(light_calibration) == 16:
+            light_vals = light_calibration
+        else:
+            light_vals = light_calibration[0,:]
+        return light_vals
 
-        # Log the update message to console and file
-        message = f"Vial {vial}: LIGHT {light_status} {light_uE}uE, PWM={light_pwm}"
-        print(message)
-        logger.info(message)
+    def update_light(self, light_vals, immediate = False):
+        data = {'param': 'light', 'value': light_vals,
+                'immediate': immediate, 'recurring': True}
+        self.logger.debug('light command: %s' % data)
+        print(f'TODO implement light command: {data}')
+        # self.eVOLVER.emit('command', data, namespace = '/dpu-evolver')

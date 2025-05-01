@@ -18,8 +18,10 @@ from nbstreamreader import NonBlockingStreamReader as NBSR
 import custom_script
 from custom_script import EXP_NAME
 from custom_script import EVOLVER_PORT, OPERATION_MODE
-from custom_script import STIR_INITIAL, TEMP_INITIAL, LIGHT_CAL_FILE, EXCEL_CONFIG_FILE
-import step_utils as su
+from custom_script import STIR_INITIAL, TEMP_INITIAL, EXCEL_CONFIG_FILE
+import utils.config_utils as cu
+import utils.step_init as step_init
+import utils.file_utils as fu
 
 # Should not be changed
 # vials to be considered/excluded should be handled
@@ -31,7 +33,6 @@ EXP_DIR = os.path.join(SAVE_PATH, EXP_NAME)
 OD_CAL_PATH = os.path.join(SAVE_PATH, 'od_cal.json')
 TEMP_CAL_PATH = os.path.join(SAVE_PATH, 'temp_cal.json')
 PUMP_CAL_PATH = os.path.join(SAVE_PATH, 'pump_cal.json')
-LIGHT_CAL_PATH = os.path.join(SAVE_PATH, LIGHT_CAL_FILE)
 JSON_PARAMS_FILE = os.path.join(SAVE_PATH, 'eVOLVER_parameters.json')
 
 SIGMOID = 'sigmoid'
@@ -50,7 +51,7 @@ class EvolverNamespace(BaseNamespace):
     OD_initial = None
     experiment_params = None
     ip_address = None
-    exp_dir = SAVE_PATH
+    exp_dir = EXP_DIR
 
     def on_connect(self, *args):
         print("Connected to eVOLVER as client")
@@ -275,12 +276,6 @@ class EvolverNamespace(BaseNamespace):
         logger.debug('temperature command: %s' % data)
         self.emit('command', data, namespace = '/dpu-evolver')
 
-    def update_light(self, light_vals, immediate = False):
-        data = {'param': 'light', 'value': light_vals,
-                'immediate': immediate, 'recurring': True}
-        logger.debug('light command: %s' % data)
-        self.emit('command', data, namespace = '/dpu-evolver')    
-
     def fluid_command(self, MESSAGE):
         logger.debug('fluid command: %s' % MESSAGE)
         command = {'param': 'pump', 'value': MESSAGE,
@@ -334,44 +329,6 @@ class EvolverNamespace(BaseNamespace):
         for default in defaults:
             text_file.write(default + '\n')
         text_file.close()
-
-    def load_excel_configs(self, elapsed_time, vials, config_filename=EXCEL_CONFIG_FILE):
-        """
-        Load configurations from an Excel file and compare them with existing configs for each vial.
-
-        Args:
-            vials (list): A list of vials for which to compare configs.
-            config_filename (str, optional): The path to the Excel file containing the configurations. Defaults to EXCEL_CONFIG_FILE.
-
-        Side Effects:
-            Logs config changes for each vial.
-            Closes the Excel file handle.
-        """
-        
-        # Load the Excel file
-        excel_file = pd.ExcelFile(config_filename)
-
-        # Get the list of configs
-        config_names = excel_file.sheet_names
-
-        # Iterate through each sheet
-        for config_name in config_names:
-            # Read the sheet into a DataFrame
-            config = pd.read_excel(excel_file, sheet_name=config_name)
-            
-            # Compare config from file with existing configs for each vial
-            for vial in vials:
-                current_config = np.array(config.loc[vial])
-                current_config[0] = elapsed_time # replace first value in current config with elapsed time
-                config_change = su.compare_configs(config_name, vial, current_config)
-
-                if config_change:
-                    # Log config change
-                    print(f'Vial {vial}: updating {config_name} config')
-                    logger.info(f'Vial {vial}: updating {config_name} config')
-        
-        # Explicitly close the file handle
-        excel_file.close()
                 
     def initialize_exp(self, vials, experiment_params, log_name, quiet, verbose, ip_address, always_yes = False):
         self.ip_address = ip_address
@@ -421,13 +378,7 @@ class EvolverNamespace(BaseNamespace):
             os.makedirs(os.path.join(EXP_DIR, 'slow_pump_log'))
             os.makedirs(os.path.join(EXP_DIR, 'ODset'))
             os.makedirs(os.path.join(EXP_DIR, 'growthrate'))
-            os.makedirs(os.path.join(EXP_DIR, 'continuous_gr')) # for continuous growth rate
             os.makedirs(os.path.join(EXP_DIR, 'chemo_config'))
-            os.makedirs(os.path.join(EXP_DIR, 'step_config')) # for stepwise evolution settings
-            os.makedirs(os.path.join(EXP_DIR, 'step_gen_config')) # for stepwise evolution settings
-            os.makedirs(os.path.join(EXP_DIR, 'step_log')) # for stepwise evolution logging
-            os.makedirs(os.path.join(EXP_DIR, 'light_config')) # light settings
-            os.makedirs(os.path.join(EXP_DIR, 'light_log')) # light values over time
   
             setup_logging(log_name, quiet, verbose)
             for x in vials:
@@ -463,31 +414,6 @@ class EvolverNamespace(BaseNamespace):
                                   defaults=["0,0,0",
                                             "0,0,0"],
                                   directory='chemo_config')
-                # make stepwise evolution settings file
-                self._create_file(x, 'step_config',
-                                  defaults=[exp_str,
-                                            "0,0,0"], # Format: [elapsed_time, step1, step2, ...]
-                                  directory='step_config')
-                # make stepwise evolution variable generation file
-                self._create_file(x, 'step_gen_config',
-                                  defaults=[exp_str,
-                                            "0,0,0"], # Format: [elapsed_time, ]
-                                  directory='step_gen_config')
-                # make stepwise evolution data logging file
-                self._create_file(x, 'step_log',
-                                  defaults=[exp_str,
-                                            "0,0,0,0,0"], # Format: [elapsed_time, step_change_time, current step, chemical_concentration, event_message]
-                                  directory='step_log')
-                # make light configuration file
-                self._create_file(x, 'light_config',
-                                  defaults=["elapsed_time,acclimation_time,acclimation_light,final_light,cycle_start,ON_length,OFF_length",
-                                            "0,0,0,0,0,0,0"],
-                                  directory='light_config')
-                # make light log file
-                self._create_file(x, 'light_log',
-                                  defaults=["elapsed_time,light_time,light1_uE,PWM_1,light2_uE,PWM_2,light3_uE,PWM_3",
-                                            "0,0,0,0,0,0,0,0"], # format: (elapsed_time, light_time, light1 uE, PWM value 1, light2 uE, PWM value 2, light3 uE, PWM value 3)
-                                  directory='light_log')
 
             stir_rate = STIR_INITIAL
             temp_values = TEMP_INITIAL
@@ -520,7 +446,17 @@ class EvolverNamespace(BaseNamespace):
             self.OD_initial = x[1]
 
         elapsed_time = round((time.time() - start_time) / 3600, 4)
-        self.load_excel_configs(elapsed_time, vials, config_filename=EXCEL_CONFIG_FILE) # Load configurations from an Excel file and compare them with existing configs for each vial.
+        
+        # Selection log initialization
+        excel_configs = cu.load_excel_configs(EXCEL_CONFIG_FILE)
+        selection_parameters = cu.get_unique_parameters(excel_configs) # Find the unique selection parameters as split by '-'
+        for parameter in selection_parameters:
+            default_heading = ["elapsed_time,step_change_time,current_step,chemical_concentration,event_message",
+                                "0,0,0,0,0"]
+            fu.initialize_logs(parameter, vials, default_heading, self)
+            
+            step_init.update_selection_configs(parameter, vials, excel_configs, elapsed_time, logger, self)
+            step_init.plot_steps(vials, f'{parameter}-steps', parameter, self.exp_dir) # plot selection steps for each vial
 
         # copy current custom script to txt file
         backup_filename = '{0}_{1}.txt'.format(EXP_NAME,
@@ -534,9 +470,6 @@ class EvolverNamespace(BaseNamespace):
 
     def check_for_calibrations(self):
         result = True
-        if not os.path.exists(LIGHT_CAL_PATH):
-            print(f'No light calibration file found at {LIGHT_CAL_PATH}')
-            result = False
         if not os.path.exists(OD_CAL_PATH) or not os.path.exists(TEMP_CAL_PATH) or not os.path.exists(PUMP_CAL_PATH):
             # log and request again
             logger.warning('Calibrations not received yet, requesting again')
@@ -568,15 +501,6 @@ class EvolverNamespace(BaseNamespace):
         with open(PUMP_CAL_PATH) as f:
             pump_cal = json.load(f)
         return pump_cal['coefficients']
-    
-    def get_light_calibration(self):
-        file_path = os.path.join(SAVE_PATH, LIGHT_CAL_FILE)
-        light_calibration = np.loadtxt(file_path, delimiter="\t")
-        if len(light_calibration) == 16:
-            light_vals = light_calibration
-        else:
-            light_vals = light_calibration[0,:]
-        return light_vals
 
     def calc_growth_rate(self, vial, gr_start, elapsed_time):
         ODfile_name =  "vial{0}_OD.txt".format(vial)
