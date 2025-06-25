@@ -186,8 +186,9 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
         logger.info(f'Pump MESSAGE = {MESSAGE}')
 
     ##### LIGHT CONTROL #####
-    light_controller = light_control.LightController(vials, dilution_window, elapsed_time, eVOLVER)
-    light_controller.control()
+    for lightname in ['light2', 'light3']:
+        light_controller = light_control.LightController(lightname, vials, dilution_window, elapsed_time, eVOLVER)
+        light_controller.control()
 
 if __name__ == '__main__':
     print('Please run eVOLVER.py instead')

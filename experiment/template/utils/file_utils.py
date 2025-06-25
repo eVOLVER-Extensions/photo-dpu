@@ -149,7 +149,7 @@ def update_log(vial, log_name, elapsed_time, message, exp_dir):
     file_name = f"vial{vial}_{log_name}.txt"
     file_path = os.path.join(exp_dir, log_name, file_name)
     
-    with open(file_path, "a+") as text_file:
+    with open(file_path, "a+", encoding="utf-8") as text_file:
         text_file.write(f"{elapsed_time},{message}\n")
 
 if __name__ == '__main__':

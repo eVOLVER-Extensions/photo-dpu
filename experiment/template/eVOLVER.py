@@ -325,7 +325,7 @@ class EvolverNamespace(BaseNamespace):
             directory = param
         file_name =  "vial{0}_{1}.txt".format(vial, param)
         file_path = os.path.join(EXP_DIR, directory, file_name)
-        text_file = open(file_path, "w")
+        text_file = open(file_path, "w", encoding="utf-8")
         for default in defaults:
             text_file.write(default + '\n')
         text_file.close()

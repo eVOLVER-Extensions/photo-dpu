@@ -6,12 +6,13 @@ import utils.file_utils as fu
 import step_control
 
 ### Light Settings ###
-LIGHT_CAL_FILE = 'light_cal.txt'
-SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
-LIGHT_CAL_PATH = os.path.join(SAVE_PATH, LIGHT_CAL_FILE) # TODO: port light calibration import into light_control.py
-
 class LightController:
-    def __init__(self, vials, dilution_window, elapsed_time, eVOLVER):
+    def __init__(self, lightname, vials, dilution_window, elapsed_time, eVOLVER):
+        self.lightname = lightname
+        self.light_cal_file = f'{lightname}_cal.txt'
+        self.save_path = os.path.dirname(os.path.realpath(__file__))
+        self.light_cal_path = os.path.join(self.save_path, self.light_cal_file) # TODO: port light calibration import into light_control.py
+
         self.vials = vials
         self.dilution_window = dilution_window
         self.elapsed_time = elapsed_time
@@ -19,7 +20,7 @@ class LightController:
         self.logger = eVOLVER.logger
         self.exp_dir = eVOLVER.exp_dir
      
-        self.light_MESSAGE = ['--'] * 48 # initializes light message
+        self.light_MESSAGE = ['--'] * 16 # initializes light message
         self.light_cal = self.get_light_calibration() # read from calibration file
 
     def control(self):
@@ -38,10 +39,10 @@ class LightController:
                 # Log the light status message
                 if light_status_message != '[STEP CHANGE]': # light status message was already logged in light_controller.control()
                     log_message = f"{self.elapsed_time},{light_uE},0,{light_status_message}"
-                    fu.update_log(vial, f'light_log', self.elapsed_time, log_message, self.exp_dir)
+                    fu.update_log(vial, f'{self.lightname}_log', self.elapsed_time, log_message, self.exp_dir)
         
         # Send light command to eVOLVER
-        if self.light_MESSAGE != ['--'] * 48:
+        if self.light_MESSAGE != ['--'] * 16:
             self.update_light(self.light_MESSAGE)
 
     def determine_light_level(self, vial):
@@ -52,13 +53,13 @@ class LightController:
         - The light value in uE (micromoles per second per meter squared).
         """
         # Load light_controls for this vial
-        light_controls = fu.labeled_last_n_lines('light-control', vial, 1, self.exp_dir).iloc[0]
+        light_controls = fu.labeled_last_n_lines(f'{self.lightname}-control', vial, 1, self.exp_dir).iloc[0]
         step_type = light_controls['step_type'].lower()
         acclimation_time = float(light_controls['acclimation_time'])
         acclimation_light = float(light_controls['acclimation_light'])
         final_light = float(light_controls['final_light'])
 
-        light_log = fu.labeled_last_n_lines('light_log', vial, 1, self.exp_dir).iloc[0]
+        light_log = fu.labeled_last_n_lines(f'{self.lightname}_log', vial, 1, self.exp_dir).iloc[0]
         current_light = float(light_log['current_step'])
 
         # During the acclimation phase
@@ -73,9 +74,9 @@ class LightController:
         
         # Stepped Control
         else:
-            light_controller = step_control.SteppedController(vial, 'light', self.dilution_window, self.elapsed_time, self.eVOLVER)
+            light_controller = step_control.SteppedController(vial, f'{self.lightname}', self.dilution_window, self.elapsed_time, self.eVOLVER)
             MESSAGE,light_status_message= light_controller.control()
-            light_log = fu.labeled_last_n_lines('light_log', vial, 1, self.exp_dir).iloc[0]
+            light_log = fu.labeled_last_n_lines(f'{self.lightname}_log', vial, 1, self.exp_dir).iloc[0]
             current_light = float(light_log['current_step'])
 
             if light_status_message:
@@ -99,7 +100,7 @@ class LightController:
         return int((float(light_uE) - calibration[1]) / calibration[0])
 
     def get_light_calibration(self):
-        file_path = os.path.join(SAVE_PATH, LIGHT_CAL_FILE)
+        file_path = os.path.join(self.save_path, self.light_cal_file)
         light_calibration = np.loadtxt(file_path, delimiter="\t")
         if len(light_calibration) == 16:
             light_vals = light_calibration
@@ -108,8 +109,8 @@ class LightController:
         return light_vals
 
     def update_light(self, light_vals, immediate = False):
-        data = {'param': 'light', 'value': light_vals,
+        data = {'param': self.lightname, 'value': light_vals,
                 'immediate': immediate, 'recurring': True}
-        self.logger.debug('light command: %s' % data)
+        self.logger.debug(f'{self.lightname} command: %s' % data)
         print(f'TODO implement light command: {data}')
         # self.eVOLVER.emit('command', data, namespace = '/dpu-evolver')
