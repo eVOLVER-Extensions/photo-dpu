@@ -1,13 +1,11 @@
 import os
 import numpy as np
-import pandas as pd
-import logging
 import utils.file_utils as fu
 import step_control
 
 ### Light Settings ###
 class LightController:
-    def __init__(self, lightname, vials, dilution_window, elapsed_time, eVOLVER):
+    def __init__(self, lightname, vials, dilution_window, elapsed_time, eVOLVER, logger):
         self.lightname = lightname
         self.light_cal_file = f'{lightname}_cal.txt'
         self.save_path = os.path.dirname(os.path.realpath(__file__))
@@ -17,10 +15,11 @@ class LightController:
         self.dilution_window = dilution_window
         self.elapsed_time = elapsed_time
         self.eVOLVER = eVOLVER
-        self.logger = eVOLVER.logger
+        self.logger = logger
         self.exp_dir = eVOLVER.exp_dir
      
         self.light_MESSAGE = ['--'] * 16 # initializes light message
+        self.current_lights = [0] * 16 # initializes current light values
         self.light_cal = self.get_light_calibration() # read from calibration file
 
     def control(self):
@@ -32,17 +31,19 @@ class LightController:
             light_uE,light_status_message = self.determine_light_level(vial)
 
             if light_status_message is not None:
-                print(f'{self.elapsed_time}hrs | Vial {vial}: {light_status_message}')
+                # print(f'{self.elapsed_time}hrs | Vial {vial}: {light_status_message}')
                 light_pwm = self.calculate_pwm(light_uE, self.light_cal[vial])
                 self.light_MESSAGE[vial] = str(light_pwm)
                 
                 # Log the light status message
-                if light_status_message != '[STEP CHANGE]': # light status message was already logged in light_controller.control()
-                    log_message = f"{self.elapsed_time},{light_uE},0,{light_status_message}"
-                    fu.update_log(vial, f'{self.lightname}_log', self.elapsed_time, log_message, self.exp_dir)
+                log_message = f"{self.elapsed_time},{light_uE},0,{light_pwm},{light_status_message}"
+                fu.update_log(vial, f'{self.lightname}_log', self.elapsed_time, log_message, self.exp_dir)
+            else: # Send the current value in the log
+                light_pwm = self.calculate_pwm(self.current_lights[vial], self.light_cal[vial])
+                self.light_MESSAGE[vial] = str(light_pwm)
         
         # Send light command to eVOLVER
-        if self.light_MESSAGE != ['--'] * 16:
+        if self.light_MESSAGE != ['--'] * 16: # TODO: only send light command if different from self.current_lights
             self.update_light(self.light_MESSAGE)
 
     def determine_light_level(self, vial):
@@ -61,27 +62,32 @@ class LightController:
 
         light_log = fu.labeled_last_n_lines(f'{self.lightname}_log', vial, 1, self.exp_dir).iloc[0]
         current_light = float(light_log['current_step'])
+        self.current_lights[vial] = current_light
 
         # During the acclimation phase
         if (self.elapsed_time < acclimation_time) and (current_light != acclimation_light):
-            print(f'Vial {vial}: light is ON, acclimating at {acclimation_light}uE')
+            print(f'Vial {vial}: {self.lightname} is ON, acclimating at {acclimation_light}uE')
+            self.logger.info(f'Vial {vial}: {self.lightname} is ON, acclimating at {acclimation_light}uE')
             return acclimation_light, f'[ACCLIMATING] at {acclimation_light}uE'
         
         # Final light level, no stepped control
-        elif (step_type == 'off') and (current_light != final_light):
-            print(f'Vial {vial}: light is ON, final light is {final_light}uE')
+        elif (step_type == 'off') and (self.elapsed_time > acclimation_time) and (current_light != final_light):
+            print(f'Vial {vial}: {self.lightname} is ON, final light is {final_light}uE')
+            self.logger.info(f'Vial {vial}: {self.lightname} is ON, final light is {final_light}uE')
             return float(light_controls['final_light']), f'[FINAL LIGHT] at {final_light}uE'
         
         # Stepped Control
-        else:
-            light_controller = step_control.SteppedController(vial, f'{self.lightname}', self.dilution_window, self.elapsed_time, self.eVOLVER)
-            MESSAGE,light_status_message= light_controller.control()
-            light_log = fu.labeled_last_n_lines(f'{self.lightname}_log', vial, 1, self.exp_dir).iloc[0]
-            current_light = float(light_log['current_step'])
-
-            if light_status_message:
-                print(f'Vial {vial}: light updated to {current_light}')
-                return current_light,'[STEP CHANGE]'
+        elif step_type != 'off' and (self.elapsed_time > acclimation_time):
+            light_log = None
+            step_controller = step_control.SteppedController(vial, f'{self.lightname}', self.dilution_window, self.elapsed_time, self.eVOLVER, self.logger)
+            fluidics_command, light_log = step_controller.control()
+            
+            if light_log:
+                light_log = light_log.split(',')
+                current_light = float(light_log[1])
+                event_message = light_log[-1]
+                print(f'Vial {vial}: {self.lightname} {event_message}')
+                return current_light,event_message
             
         return None,None
 
@@ -110,7 +116,6 @@ class LightController:
 
     def update_light(self, light_vals, immediate = False):
         data = {'param': self.lightname, 'value': light_vals,
-                'immediate': immediate, 'recurring': True}
+                'immediate': immediate, 'recurring': False}
         self.logger.debug(f'{self.lightname} command: %s' % data)
-        print(f'TODO implement light command: {data}')
-        # self.eVOLVER.emit('command', data, namespace = '/dpu-evolver')
+        self.eVOLVER.emit('command', data, namespace = '/dpu-evolver')

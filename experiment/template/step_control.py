@@ -8,12 +8,12 @@ import utils.file_utils as fu
 import utils.config_utils as cu
 
 class SteppedController:
-    def __init__(self, vial, parameter, dilution_window, elapsed_time, eVOLVER, fluidics_params=None):
+    def __init__(self, vial, parameter, dilution_window, elapsed_time, eVOLVER, logger, fluidics_params=None):
         self.vial = vial
         self.parameter = parameter
         self.exp_dir = eVOLVER.exp_dir
         self.dilution_window = dilution_window
-        self.logger = eVOLVER.logger
+        self.logger = logger
         self.elapsed_time = elapsed_time
         self.eVOLVER = eVOLVER
         self.gr_data, self.OD_data, self.selection_steps, self.selection_controls, self.last_step_log = self.load_info()
@@ -46,10 +46,10 @@ class SteppedController:
         self.selection_units = self.selection_controls.selection_units
 
         # Step Log
-        self.last_time = float(self.last_step_log[0])
-        self.last_step_change_time = float(self.last_step_log[1])
-        self.last_step = float(self.last_step_log[2])
-        self.last_conc = float(self.last_step_log[3])
+        self.last_time = float(self.last_step_log['elapsed_time'])
+        self.last_step_change_time = float(self.last_step_log['step_change_time'])
+        self.last_step = float(self.last_step_log['current_step'])
+        self.last_conc = float(self.last_step_log['chemical_concentration'])
 
         self.step_time = self.elapsed_time - self.last_step_change_time
         self.step_changed_time = self.last_step_change_time
@@ -66,7 +66,7 @@ class SteppedController:
         OD_data = fu.get_last_n_lines('OD', self.vial, self.dilution_window * 2, self.exp_dir)
         selection_steps =fu.get_last_n_lines(f'{self.parameter}-steps', self.vial, 1, self.exp_dir)[0][1:]
         selection_controls = fu.labeled_last_n_lines(f'{self.parameter}-control', self.vial, 1, self.exp_dir).iloc[0]
-        last_step_log = fu.get_last_n_lines(f'{self.parameter}_log', self.vial, 1, self.exp_dir)[0]
+        last_step_log = fu.labeled_last_n_lines(f'{self.parameter}_log', self.vial, 1, self.exp_dir).iloc[0]
 
         return gr_data, OD_data, selection_steps, selection_controls, last_step_log
 
@@ -90,9 +90,12 @@ class SteppedController:
             MESSAGE = self.adjust_concentration(MESSAGE)
 
         if self.selection_status_message: # Log the selection status message if there is one
-            log_message = f"{self.step_changed_time},{self.current_step},{round(self.current_conc, 5)},{self.selection_status_message}"
-            fu.update_log(self.vial, f'{self.parameter}_log', self.elapsed_time, log_message, self.exp_dir)
-
+            log_message = f"{self.step_changed_time},{self.current_step},{round(self.current_conc, 5)},0,{self.selection_status_message}"
+            if (self.selection_type == 'chemical'): # Otherwise update the log in the parameter controller
+                fu.update_log(self.vial, f'{self.parameter}_log', self.elapsed_time, log_message, self.exp_dir)
+            else:
+                return MESSAGE, log_message
+                
         return MESSAGE,self.selection_status_message
 
     def check_started(self):
@@ -132,7 +135,9 @@ class SteppedController:
 
     def decrease_step(self, reason):
         """Decrease the selection step for the vial."""
-        if self.closest_step_index == 0:
+        if self.current_step == 0:
+            self.selection_status_message += f"[DECREASE FAILED] (Already at 0). Cannot decrease further despite [{reason}]| "
+        elif self.closest_step_index == 0:
             self.current_step = self.current_step * self.fold_decrease
             self.selection_status_message += f"[DECREASE] {self.fold_decrease}X to {self.current_step} {self.selection_units} [Already at or below minimum step] [{reason}] | "
         else:

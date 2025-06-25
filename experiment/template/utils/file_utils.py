@@ -132,7 +132,7 @@ def initialize_logs(parameter, vials, heading, eVOLVER):
         for vial in vials:
             # make stepwise evolution data logging file
             eVOLVER._create_file(vial, log_name, defaults=heading, directory=log_name)
-    print(f'Initialized {parameter} logs')
+        print(f'Initialized {parameter} logs')
 
 def update_log(vial, log_name, elapsed_time, message, exp_dir):
     """
@@ -151,6 +151,74 @@ def update_log(vial, log_name, elapsed_time, message, exp_dir):
     
     with open(file_path, "a+", encoding="utf-8") as text_file:
         text_file.write(f"{elapsed_time},{message}\n")
+
+def get_last_value(var_name, vial, exp_dir):
+    """
+    Retrieves the last value of a variable from the log file for a given vial.
+    
+    Parameters:
+        var_name (str): The name of the variable.
+        vial (int): The vial number.
+        exp_dir (str): The directory where the log files are stored.
+    Returns:
+        float: The last value of the variable.
+    """
+    last_line = labeled_last_n_lines(var_name, vial, 1, exp_dir)
+    if last_line.empty:
+        print(f"Error: No data found for vial {vial} in {var_name}.")
+        return None
+    try:
+        return float(last_line["PWM_value"].values[0])
+    except ValueError:
+        print(f"Error: Unable to convert last value to float for vial {vial} in {var_name}.")
+        return None
+
+def send_command(parameter, MESSAGE, eVOLVER, logger):
+    """
+    Sends a command to the eVOLVER system.
+    
+    Parameters:
+        parameter (str): The parameter to send the command for.
+        message (str): The values of the command to send.
+        eVOLVER (object): The eVOLVER object to send the command to.
+    Returns:
+        None
+    """
+    logger.info(f'{parameter} command: %s' % MESSAGE)
+    command = {'param': f'{parameter}', 'value': MESSAGE,
+                'recurring': False ,'immediate': True}
+    eVOLVER.emit('command', command, namespace='/dpu-evolver')
+
+def update_values_from_log(parameter, vials, exp_dir, eVOLVER, logger):
+    """
+    Sends an eVOLVER command to the server for a given parameter based on the last logged value
+
+    Parameters:
+        parameter (str): The parameter to update.
+        vials (list): List of vial identifiers to update.
+        exp_dir (str): The directory where the parameter files are stored.
+    Returns:
+        None
+    """
+
+    MESSAGE = [0] * len(vials)  # Initialize MESSAGE list with zeros
+
+    for vial in vials:
+        selection_controls = labeled_last_n_lines(f'{parameter}-control', vial, 1, exp_dir).iloc[0]
+        selection_type = selection_controls.selection_type.lower()
+        if selection_type == 'non-chemical':
+            # load the last value from the log file
+            last_value = get_last_value(parameter+'_log', vial, exp_dir)
+            MESSAGE[vial] = str(int(last_value))
+        elif selection_type == 'chemical':
+            continue
+        else:
+            print(f"Error: Unknown selection type '{selection_type}' for vial {vial}.")
+            continue
+    
+    # Send the command to the eVOLVER system
+    send_command(parameter, MESSAGE, eVOLVER, logger)
+
 
 if __name__ == '__main__':
     print('Please run eVOLVER.py instead')

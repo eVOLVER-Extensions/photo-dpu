@@ -89,8 +89,6 @@ def update_step_configs(parameter, vials, selection_steps, config_name, selectio
             with open(os.path.join(config_directory, f'vial{vial}_{config_name}.txt'), 'w') as file:
                 file.write(','.join(map(str, current_config)) + '\n')
             updated_vials.append(vial)
-            print(f'Vial {vial}: updating {config_name} config')
-            logger.info(f'Vial {vial}: updating {config_name} config')
 
     # Compare the current config to the last line of the old config
     else:
@@ -100,8 +98,6 @@ def update_step_configs(parameter, vials, selection_steps, config_name, selectio
 
             if config_changed: # Update and log config change
                 cu.update_config(vial, config_name, current_config, eVOLVER.exp_dir) # Update the config file
-                print(f'Vial {vial}: updating {config_name} config')
-                logger.info(f'Vial {vial}: updating {config_name} config')
                 updated_vials.append(vial)
     
                 # Update parameter_log if the config is updated
@@ -114,7 +110,14 @@ def update_step_configs(parameter, vials, selection_steps, config_name, selectio
                     text_file.write(f"{elapsed_time},{elapsed_time},{round(selection_steps[vial][0], 3)},{current_conc},CONFIG CHANGE\n") # Format: [elapsed_time, step_time, current_step, current_conc]
                     text_file.close()
                     logger.info(f"Vial {vial}: step log updated to first step: {round(selection_steps[vial][0], 3)} {selection_units}")  
-    
+   
+    # Log and print which vials have updated configs
+    # if updated_vials != []:
+    update_string = ",".join(np.array(updated_vials).astype(str))
+    update_string = f"{config_name} updated for vials: {update_string}"
+    print(update_string)
+    logger.info(update_string)
+
     return updated_vials
 
 def parse_manual_steps(vial, steps):

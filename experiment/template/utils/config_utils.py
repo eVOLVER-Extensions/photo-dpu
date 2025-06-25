@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import numpy as np
 
 #### UTILITIES FOR WORKING WITH CONFIG FILES ####
 def load_excel_configs(config_filename):
@@ -119,8 +120,6 @@ def update_config_files(vials, config, config_name, elapsed_time, logger, exp_di
             vial_config['elapsed_time'] = elapsed_time # add the elapsed time
             vial_config.to_csv(os.path.join(config_directory, f'vial{vial}_{config_name}.txt'), header=True, index=False)
             updated_vials.append(vial)
-            print(f'Vial {vial}: updating {config_name} config')
-            logger.info(f'Vial {vial}: updating {config_name} config')
 
     # Compare the current config to the last line of the old config
     else:
@@ -131,9 +130,15 @@ def update_config_files(vials, config, config_name, elapsed_time, logger, exp_di
 
             if config_changed: # Update and log config change
                 update_config(vial, config_name, current_config, exp_dir)
-                print(f'Vial {vial}: updating {config_name} config')
-                logger.info(f'Vial {vial}: updating {config_name} config')
                 updated_vials.append(vial)
+
+    # Log and print which vials have updated configs
+    # if updated_vials != []:
+    update_string = ",".join(np.array(updated_vials).astype(str))
+    update_string = f"{config_name} updated for vials: {update_string}"
+    print(update_string)
+    logger.info(update_string)
+    
     return updated_vials
 
 def get_unique_parameters(config_dict):

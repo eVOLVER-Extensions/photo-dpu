@@ -9,6 +9,7 @@ import traceback
 
 import step_control
 import light_control
+import utils.file_utils
 
 # logger setup
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ TEMP_INITIAL = [38] * 16 #degrees C, makes 16-value list
 #Alternatively enter 16-value list to set different values
 #TEMP_INITIAL = [30,30,30,30,32,32,32,32,34,34,34,34,36,36,36,36]
 
-STIR_INITIAL = [10] * 16 #try 8,10,12 etc; makes 16-value list
+STIR_INITIAL = [6] * 16 #try 8,10,12 etc; makes 16-value list
 #Alternatively enter 16-value list to set different values
 #STIR_INITIAL = [7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10]
 
@@ -57,8 +58,8 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
         lower_thresh = [999] * 16  #to set all vials to the same value, creates 16-value list
         upper_thresh = [999] * 16 #to set all vials to the same value, creates 16-value list
     else: 
-        lower_thresh = [1.6] * 16  #to set all vials to the same value, creates 16-value list
-        upper_thresh = [2] * 16 #to set all vials to the same value, creates 16-value list
+        lower_thresh = [0.8] * 16  #to set all vials to the same value, creates 16-value list
+        upper_thresh = [1] * 16 #to set all vials to the same value, creates 16-value list
 
     if eVOLVER.experiment_params is not None:
         lower_thresh = list(map(lambda x: x['lower'], eVOLVER.experiment_params['vial_configuration']))
@@ -135,7 +136,6 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
 
             #if need to dilute to lower threshold, then calculate amount of time to pump
             if average_OD > ODset and collecting_more_curves:
-
                 time_in = - (np.log(lower_thresh[x]/average_OD)*VOLUME)/flow_rate[x]
 
                 if time_in > 20:
@@ -175,7 +175,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     fluidics_params = {'time_out': time_out, 'volume': VOLUME, 'flow_rate': flow_rate, 'bolus_fast': bolus_fast, 'bolus_slow': bolus_slow, 'lower_thresh': lower_thresh}
     for vial in vials:
         # Create a SteppedController instance for the current vial
-        controller = step_control.SteppedController(vial, 'selection', dilution_window, elapsed_time, eVOLVER, fluidics_params=fluidics_params)
+        controller = step_control.SteppedController(vial, 'selection', dilution_window, elapsed_time, eVOLVER, logger, fluidics_params=fluidics_params)
         
         # Perform selection control operations for this vial
         MESSAGE,selection_status_message = controller.control(MESSAGE)
@@ -187,7 +187,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
 
     ##### LIGHT CONTROL #####
     for lightname in ['light2', 'light3']:
-        light_controller = light_control.LightController(lightname, vials, dilution_window, elapsed_time, eVOLVER)
+        light_controller = light_control.LightController(lightname, vials, dilution_window, elapsed_time, eVOLVER, logger)
         light_controller.control()
 
 if __name__ == '__main__':
